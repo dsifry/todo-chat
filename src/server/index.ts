@@ -1,12 +1,16 @@
 import express, { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
+import Anthropic from "@anthropic-ai/sdk";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initializeDatabase } from "./db/schema.js";
 import { createQueries } from "./db/queries.js";
 import { TodoService } from "./services/todo.js";
+import { ClaudeService } from "./services/claude.js";
+import { ChatService } from "./services/chat.js";
 import { createTodoRouter } from "./routes/todos.js";
+import { createChatRouter } from "./routes/chat.js";
 import { createWebSocketServer } from "./websocket/handler.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -40,11 +44,19 @@ export function createApp(db?: Database.Database): express.Express {
     res.json({ status: "ok" });
   });
 
-  // Mount todo routes when a database is provided
+  // Mount routes when a database is provided
   if (db) {
     const queries = createQueries(db);
     const todoService = new TodoService(queries);
     app.use("/api/todos", createTodoRouter(todoService));
+
+    // Mount chat routes if ANTHROPIC_API_KEY is available
+    if (process.env.ANTHROPIC_API_KEY) {
+      const anthropicClient = new Anthropic();
+      const claudeService = new ClaudeService(anthropicClient);
+      const chatService = new ChatService(queries, claudeService);
+      app.use("/api/chat", createChatRouter(chatService));
+    }
   }
 
   // Static file serving for production

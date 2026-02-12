@@ -1,7 +1,10 @@
 import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { App } from "./App";
+
+// jsdom does not implement scrollIntoView
+Element.prototype.scrollIntoView = vi.fn();
 
 describe("App", () => {
   it("renders the app title", () => {
@@ -31,9 +34,11 @@ describe("App", () => {
     expect(main).toHaveClass("sm:flex-row");
   });
 
-  it("renders todo loading state and chat placeholder", () => {
+  it("renders todo loading state and chat empty state", () => {
     render(<App />);
     expect(screen.getByText("Loading todos...")).toBeInTheDocument();
-    expect(screen.getByText("Chat will appear here")).toBeInTheDocument();
+    expect(
+      screen.getByText("Start a conversation to get help with your todos"),
+    ).toBeInTheDocument();
   });
 });

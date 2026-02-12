@@ -1,5 +1,8 @@
+import { useCallback } from "react";
 import { TodoList } from "./components/TodoList.js";
+import { ChatPanel } from "./components/ChatPanel.js";
 import { useTodos } from "./hooks/useTodos.js";
+import { useChat } from "./hooks/useChat.js";
 
 export function App() {
   const {
@@ -12,6 +15,24 @@ export function App() {
     deleteTodo,
     connectionStatus,
   } = useTodos({ enableWebSocket: true });
+
+  const handleSuggestionAccepted = useCallback(
+    (title: string) => {
+      void addTodo(title);
+    },
+    [addTodo],
+  );
+
+  const {
+    messages,
+    isStreaming,
+    error: chatError,
+    streamingContent,
+    suggestions,
+    sendMessage,
+    acceptSuggestion,
+    dismissSuggestions,
+  } = useChat({ onSuggestionAccepted: handleSuggestionAccepted });
 
   return (
     <div className="flex h-screen flex-col bg-gray-50">
@@ -55,9 +76,16 @@ export function App() {
           <div className="border-b border-gray-200 bg-white px-4 py-2">
             <h2 className="text-lg font-semibold text-gray-700">Chat</h2>
           </div>
-          <div className="flex-1 overflow-y-auto p-4">
-            <p className="text-gray-500">Chat will appear here</p>
-          </div>
+          <ChatPanel
+            messages={messages}
+            streamingContent={streamingContent}
+            isStreaming={isStreaming}
+            error={chatError}
+            suggestions={suggestions}
+            onSend={sendMessage}
+            onAcceptSuggestion={acceptSuggestion}
+            onDismissSuggestions={dismissSuggestions}
+          />
         </section>
       </main>
     </div>
