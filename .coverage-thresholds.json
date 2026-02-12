@@ -1,16 +1,9 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Coverage thresholds for orchestrator agents and CI. Portable across projects — adjust values per-repo.",
+  "command": "npm run test:coverage",
   "thresholds": {
     "lines": 90,
     "branches": 90,
     "functions": 90,
     "statements": 90
-  },
-  "enforcement": {
-    "command": "npm run test:coverage",
-    "blockPRCreation": true,
-    "blockTaskCompletion": true,
-    "description": "Orchestrator agents MUST check coverage against these thresholds before marking any task complete or creating a PR. If coverage drops below any threshold, the task fails."
   }
 }
