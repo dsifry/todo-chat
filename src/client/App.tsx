@@ -1,8 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { TodoList } from "./components/TodoList.js";
 import { ChatPanel } from "./components/ChatPanel.js";
+import { ToastContainer, useToasts } from "./components/Toast.js";
 import { useTodos } from "./hooks/useTodos.js";
 import { useChat } from "./hooks/useChat.js";
+import type { ConnectionStatus } from "./types/index.js";
 
 export function App() {
   const {
@@ -33,6 +35,23 @@ export function App() {
     acceptSuggestion,
     dismissSuggestions,
   } = useChat({ onSuggestionAccepted: handleSuggestionAccepted });
+
+  const { toasts, addToast, dismissToast } = useToasts();
+  const prevStatusRef = useRef<ConnectionStatus>(connectionStatus);
+
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = connectionStatus;
+
+    // Skip the initial render
+    if (prev === connectionStatus) return;
+
+    if (connectionStatus === "connected") {
+      addToast("success", "Connected to server");
+    } else if (connectionStatus === "disconnected") {
+      addToast("info", "Disconnected from server");
+    }
+  }, [connectionStatus, addToast]);
 
   return (
     <div className="flex h-screen flex-col bg-gray-50">
@@ -88,6 +107,7 @@ export function App() {
           />
         </section>
       </main>
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

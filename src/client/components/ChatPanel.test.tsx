@@ -332,7 +332,7 @@ describe("useChat", () => {
     const encoder = new TextEncoder();
     let index = 0;
 
-    return vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+    return vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
       // If it's a GET to /api/chat (history load), return empty array
       if (!options || options.method !== "POST") {
         return Promise.resolve({
@@ -445,7 +445,7 @@ describe("useChat", () => {
   });
 
   it("handles sendMessage with non-ok response", async () => {
-    globalThis.fetch = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
       if (!options || options.method !== "POST") {
         return Promise.resolve({
           ok: true,
@@ -471,7 +471,7 @@ describe("useChat", () => {
   });
 
   it("handles sendMessage with null body", async () => {
-    globalThis.fetch = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
       if (!options || options.method !== "POST") {
         return Promise.resolve({
           ok: true,
@@ -563,7 +563,7 @@ describe("useChat", () => {
   });
 
   it("handles fetch failure gracefully", async () => {
-    globalThis.fetch = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
       if (!options || options.method !== "POST") {
         return Promise.resolve({
           ok: true,
@@ -691,7 +691,7 @@ describe("useChat", () => {
 
     let readCallCount = 0;
 
-    globalThis.fetch = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
       if (!options || options.method !== "POST") {
         return Promise.resolve({
           ok: true,
