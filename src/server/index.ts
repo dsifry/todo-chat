@@ -1,14 +1,18 @@
 import express, { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
+import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createQueries } from "./db/queries.js";
+import { TodoService } from "./services/todo.js";
+import { createTodoRouter } from "./routes/todos.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const SERVER_PORT = 3001;
 
-export function createApp(): express.Express {
+export function createApp(db?: Database.Database): express.Express {
   const app = express();
 
   // Body parsing with size limit
@@ -33,6 +37,13 @@ export function createApp(): express.Express {
   app.get("/api/health", (_req: Request, res: Response) => {
     res.json({ status: "ok" });
   });
+
+  // Mount todo routes when a database is provided
+  if (db) {
+    const queries = createQueries(db);
+    const todoService = new TodoService(queries);
+    app.use("/api/todos", createTodoRouter(todoService));
+  }
 
   // Static file serving for production
   const distPath = path.resolve(__dirname, "../../dist");
@@ -67,8 +78,8 @@ export function addErrorHandler(app: express.Express): void {
   );
 }
 
-export function createFullApp(): express.Express {
-  const app = createApp();
+export function createFullApp(db?: Database.Database): express.Express {
+  const app = createApp(db);
   addErrorHandler(app);
   return app;
 }
