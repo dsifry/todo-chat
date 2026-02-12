@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.beads
+.claude
+.husky
+.github
+scripts
+bin
+AGENTS.md
+CLAUDE.md
+PLAN.md
+*.db
