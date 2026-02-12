@@ -4,7 +4,6 @@ import { ChatPanel } from "./components/ChatPanel.js";
 import { ToastContainer, useToasts } from "./components/Toast.js";
 import { useTodos } from "./hooks/useTodos.js";
 import { useChat } from "./hooks/useChat.js";
-import type { ConnectionStatus } from "./types/index.js";
 
 export function App() {
   const {
@@ -37,18 +36,13 @@ export function App() {
   } = useChat({ onSuggestionAccepted: handleSuggestionAccepted });
 
   const { toasts, addToast, dismissToast } = useToasts();
-  const prevStatusRef = useRef<ConnectionStatus>(connectionStatus);
+  const hasConnectedRef = useRef(false);
 
   useEffect(() => {
-    const prev = prevStatusRef.current;
-    prevStatusRef.current = connectionStatus;
-
-    // Skip the initial render
-    if (prev === connectionStatus) return;
-
     if (connectionStatus === "connected") {
+      hasConnectedRef.current = true;
       addToast("success", "Connected to server");
-    } else if (connectionStatus === "disconnected") {
+    } else if (connectionStatus === "disconnected" && hasConnectedRef.current) {
       addToast("info", "Disconnected from server");
     }
   }, [connectionStatus, addToast]);

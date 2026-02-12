@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
-    "dev:server": "tsx watch src/server/index.ts",
+    "dev:server": "tsx watch --env-file=.env src/server/index.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
