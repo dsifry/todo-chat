@@ -31,11 +31,9 @@ describe("App", () => {
     expect(main).toHaveClass("sm:flex-row");
   });
 
-  it("renders placeholder text for both panels", () => {
+  it("renders todo loading state and chat placeholder", () => {
     render(<App />);
-    expect(
-      screen.getByText("Todo list will appear here"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Loading todos...")).toBeInTheDocument();
     expect(screen.getByText("Chat will appear here")).toBeInTheDocument();
   });
 });

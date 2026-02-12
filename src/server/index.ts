@@ -3,9 +3,11 @@ import rateLimit from "express-rate-limit";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import { initializeDatabase } from "./db/schema.js";
 import { createQueries } from "./db/queries.js";
 import { TodoService } from "./services/todo.js";
 import { createTodoRouter } from "./routes/todos.js";
+import { createWebSocketServer } from "./websocket/handler.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -100,8 +102,19 @@ export function startServer(
   port: number = Number(process.env.PORT) || SERVER_PORT,
   host: string = process.env.HOST || "127.0.0.1",
 ): void {
-  const app = createFullApp();
-  app.listen(port, host, () => {
+  const db = initializeDatabase("todo-chat.db");
+  const app = createFullApp(db);
+
+  const server = app.listen(port, host, () => {
     console.log(`Server running at http://${host}:${port}`);
   });
+
+  const queries = createQueries(db);
+  const todoService = new TodoService(queries);
+  createWebSocketServer(server, todoService);
+}
+
+// Auto-start when run directly (not when imported by tests)
+if (process.env.NODE_ENV !== "test") {
+  startServer();
 }
