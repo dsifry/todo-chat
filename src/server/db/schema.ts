@@ -19,10 +19,16 @@ export function initializeDatabase(dbPath: string): Database.Database {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS chat_messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
       content TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES chat_sessions(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -34,6 +40,21 @@ export function initializeDatabase(dbPath: string): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Ensure a default session exists
+  db.prepare(
+    "INSERT OR IGNORE INTO chat_sessions (id) VALUES (?)",
+  ).run("default");
+
+  // Migrate: add session_id to existing chat_messages tables that lack it
+  const columns = db.pragma("table_info(chat_messages)") as { name: string }[];
+  const hasSessionId = columns.some((c) => c.name === "session_id");
+  if (!hasSessionId) {
+    db.exec(`
+      ALTER TABLE chat_messages ADD COLUMN session_id TEXT REFERENCES chat_sessions(id);
+      UPDATE chat_messages SET session_id = 'default' WHERE session_id IS NULL;
+    `);
+  }
 
   return db;
 }

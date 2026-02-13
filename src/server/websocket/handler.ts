@@ -40,11 +40,16 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // Factory
 // ---------------------------------------------------------------------------
 
+export interface WebSocketServerResult {
+  wss: WebSocketServer;
+  broadcast: (message: ServerMessage) => void;
+}
+
 export function createWebSocketServer(
   httpServer: http.Server,
   service: TodoService,
   options?: WebSocketServerOptions,
-): WebSocketServer {
+): WebSocketServerResult {
   const allowedOrigins = options?.allowedOrigins ?? DEFAULT_ALLOWED_ORIGINS;
   const clients = new Set<AliveWebSocket>();
 
@@ -112,7 +117,10 @@ export function createWebSocketServer(
     });
   });
 
-  return wss;
+  return {
+    wss,
+    broadcast: (message: ServerMessage) => broadcast(clients, message),
+  };
 }
 
 // ---------------------------------------------------------------------------

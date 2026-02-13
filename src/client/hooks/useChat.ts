@@ -2,14 +2,17 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import type { ChatMessage, TodoSuggestion } from "../types/index.js";
 
 interface SSEEvent {
-  type: "chunk" | "suggestions" | "done" | "error";
+  type: "chunk" | "suggestions" | "todo_operation" | "done" | "error";
   content?: string;
   items?: TodoSuggestion[];
   message?: string;
+  toolName?: string;
+  result?: unknown;
 }
 
 interface UseChatOptions {
   onSuggestionAccepted?: (title: string) => void;
+  onTodoChanged?: () => void;
 }
 
 let nextOptimisticId = -1;
@@ -25,6 +28,8 @@ export function useChat(options: UseChatOptions = {}) {
   const [streamingContent, setStreamingContent] = useState("");
   const onSuggestionAcceptedRef = useRef(options.onSuggestionAccepted);
   onSuggestionAcceptedRef.current = options.onSuggestionAccepted;
+  const onTodoChangedRef = useRef(options.onTodoChanged);
+  onTodoChangedRef.current = options.onTodoChanged;
 
   // Load chat history on mount
   useEffect(() => {
@@ -41,9 +46,32 @@ export function useChat(options: UseChatOptions = {}) {
     void loadHistory();
   }, []);
 
+  const clearChat = useCallback(async () => {
+    try {
+      const res = await fetch("/api/chat", { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to clear chat");
+      setMessages([]);
+      setSuggestions([]);
+      setStreamingContent("");
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear chat");
+    }
+  }, []);
+
+  // Keep a ref so sendMessage can call clearChat without a dependency cycle
+  const clearChatRef = useRef(clearChat);
+  clearChatRef.current = clearChat;
+
   const sendMessage = useCallback(
     async (content: string) => {
       if (!content.trim() || isStreaming) return;
+
+      // Handle /clear command client-side
+      if (content.trim() === "/clear") {
+        await clearChatRef.current();
+        return;
+      }
 
       // Add user message optimistically
       const userMessage: ChatMessage = {
@@ -93,6 +121,10 @@ export function useChat(options: UseChatOptions = {}) {
                 break;
               case "suggestions":
                 setSuggestions(event.items || []);
+                break;
+              case "todo_operation":
+                // AI made a todo change — notify the parent
+                onTodoChangedRef.current?.();
                 break;
               case "done": {
                 // Add assistant message
@@ -148,5 +180,6 @@ export function useChat(options: UseChatOptions = {}) {
     sendMessage,
     acceptSuggestion,
     dismissSuggestions,
+    clearChat,
   };
 }

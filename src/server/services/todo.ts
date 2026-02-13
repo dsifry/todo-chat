@@ -75,6 +75,11 @@ export class TodoService {
     return todo;
   }
 
+  /** Search todos by title (case-insensitive LIKE query). */
+  search(query: string): Todo[] {
+    return this.queries.searchTodos(query);
+  }
+
   /** Delete a todo by id. Throws NotFoundError if the todo doesn't exist. */
   delete(id: number): void {
     const deleted = this.queries.deleteTodo(id);

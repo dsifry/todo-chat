@@ -1,4 +1,4 @@
-import { useState, KeyboardEvent } from "react";
+import { useState, useEffect, useRef, KeyboardEvent } from "react";
 import type { Todo } from "../types/index.js";
 
 interface TodoItemProps {
@@ -11,6 +11,35 @@ interface TodoItemProps {
 export function TodoItem({ todo, onToggle, onUpdate, onDelete }: TodoItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(todo.title);
+  const [animClass, setAnimClass] = useState("");
+  const prevTitleRef = useRef(todo.title);
+  const prevCompletedRef = useRef(todo.completed);
+  const isInitialMount = useRef(true);
+
+  // Slide-in + sparkle on initial mount
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      setAnimClass("todo-enter");
+      const timer = setTimeout(() => setAnimClass(""), 800);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  // Sparkle flash on edit (title or completed change)
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    if (
+      todo.title !== prevTitleRef.current ||
+      todo.completed !== prevCompletedRef.current
+    ) {
+      prevTitleRef.current = todo.title;
+      prevCompletedRef.current = todo.completed;
+      setAnimClass("todo-updated");
+      const timer = setTimeout(() => setAnimClass(""), 600);
+      return () => clearTimeout(timer);
+    }
+  }, [todo.title, todo.completed]);
 
   function handleSave() {
     const trimmed = editTitle.trim();
@@ -40,7 +69,7 @@ export function TodoItem({ todo, onToggle, onUpdate, onDelete }: TodoItemProps) 
   }
 
   return (
-    <li className="flex items-center gap-2 border-b border-gray-100 px-4 py-3">
+    <li className={`todo-item flex items-center gap-2 border-b border-gray-100 px-4 py-3 ${animClass}`}>
       <input
         type="checkbox"
         checked={todo.completed}

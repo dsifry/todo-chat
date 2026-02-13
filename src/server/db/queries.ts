@@ -17,6 +17,7 @@ interface ChatMessageRow {
   id: number;
   role: "user" | "assistant";
   content: string;
+  session_id: string;
   created_at: string;
 }
 
@@ -125,19 +126,42 @@ export function createQueries(db: Database.Database) {
       return result.changes > 0;
     },
 
+    // -- Chat Sessions -------------------------------------------------------
+
+    getCurrentSessionId(): string {
+      const row = db
+        .prepare(
+          "SELECT id FROM chat_sessions ORDER BY rowid DESC LIMIT 1",
+        )
+        .get() as { id: string } | undefined;
+      return row?.id ?? "default";
+    },
+
+    startNewSession(): string {
+      const id = crypto.randomUUID();
+      db.prepare("INSERT INTO chat_sessions (id) VALUES (?)").run(id);
+      return id;
+    },
+
     // -- Chat Messages ------------------------------------------------------
 
     getChatHistory(): ChatMessage[] {
+      const sessionId = this.getCurrentSessionId();
       const rows = db
-        .prepare("SELECT * FROM chat_messages ORDER BY created_at ASC")
-        .all() as ChatMessageRow[];
+        .prepare(
+          "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC",
+        )
+        .all(sessionId) as ChatMessageRow[];
       return rows.map(mapChatMessageRow);
     },
 
     createChatMessage(role: "user" | "assistant", content: string): ChatMessage {
+      const sessionId = this.getCurrentSessionId();
       const result = db
-        .prepare("INSERT INTO chat_messages (role, content) VALUES (?, ?)")
-        .run(role, content);
+        .prepare(
+          "INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)",
+        )
+        .run(role, content, sessionId);
       const row = db
         .prepare("SELECT * FROM chat_messages WHERE id = ?")
         .get(Number(result.lastInsertRowid)) as ChatMessageRow;
@@ -159,6 +183,21 @@ export function createQueries(db: Database.Database) {
         .prepare("SELECT * FROM todo_suggestions WHERE id = ?")
         .get(Number(result.lastInsertRowid)) as TodoSuggestionRow;
       return mapTodoSuggestionRow(row);
+    },
+
+    clearChatHistory(): void {
+      // Start a new session — old messages are preserved but won't appear
+      // in getChatHistory() since it filters by the current (latest) session.
+      this.startNewSession();
+    },
+
+    searchTodos(query: string): Todo[] {
+      const rows = db
+        .prepare(
+          "SELECT * FROM todos WHERE title LIKE ? ORDER BY created_at DESC",
+        )
+        .all(`%${query}%`) as TodoRow[];
+      return rows.map(mapTodoRow);
     },
 
     acceptTodoSuggestion(id: number): TodoSuggestion | undefined {

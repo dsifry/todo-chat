@@ -1,3 +1,207 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ---- Todo item animations ---- */
+
+/* Slide in from left + fade in on new todo */
+@keyframes todo-slide-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-20px) scale(0.95);
+  }
+  60% {
+    opacity: 1;
+    transform: translateX(4px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+/* Sparkle shimmer gradient sweep */
+@keyframes sparkle-sweep {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+/* Glow pulse on update */
+@keyframes glow-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+  }
+  30% {
+    box-shadow: 0 0 8px 3px rgba(99, 102, 241, 0.3),
+                0 0 16px 6px rgba(168, 85, 247, 0.15);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+  }
+}
+
+/* Star particles burst */
+@keyframes star-burst {
+  0% {
+    opacity: 1;
+    transform: scale(0);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+.todo-item {
+  position: relative;
+  transition: background-color 0.2s ease;
+}
+
+/* New todo: slide in + sparkle sweep */
+.todo-enter {
+  animation: todo-slide-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(168, 85, 247, 0.08) 25%,
+    rgba(99, 102, 241, 0.12) 50%,
+    rgba(168, 85, 247, 0.08) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: todo-slide-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+             sparkle-sweep 0.8s ease-in-out forwards;
+}
+
+/* After sparkle sweep, emit star particles */
+.todo-enter::before,
+.todo-enter::after {
+  content: "\2728"; /* sparkle emoji */
+  position: absolute;
+  font-size: 14px;
+  animation: star-burst 0.7s ease-out 0.3s forwards;
+  opacity: 0;
+  pointer-events: none;
+}
+.todo-enter::before {
+  top: 2px;
+  right: 10px;
+}
+.todo-enter::after {
+  content: "\2B50"; /* star emoji */
+  bottom: 2px;
+  right: 40px;
+  font-size: 11px;
+  animation-delay: 0.45s;
+}
+
+/* Updated todo: glow pulse + sparkle */
+.todo-updated {
+  animation: glow-pulse 0.6s ease-out forwards;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.06) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: glow-pulse 0.6s ease-out forwards,
+             sparkle-sweep 0.5s ease-in-out forwards;
+}
+
+.todo-updated::before {
+  content: "\2728";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  font-size: 12px;
+  animation: star-burst 0.5s ease-out forwards;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Chat bubble markdown styles — compact prose for chat context */
+.chat-markdown.prose {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.chat-markdown.prose > :first-child {
+  margin-top: 0;
+}
+
+.chat-markdown.prose > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown.prose p {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.chat-markdown.prose ul,
+.chat-markdown.prose ol {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+  padding-left: 1.25em;
+}
+
+.chat-markdown.prose li {
+  margin-top: 0.1em;
+  margin-bottom: 0.1em;
+}
+
+.chat-markdown.prose h1,
+.chat-markdown.prose h2,
+.chat-markdown.prose h3,
+.chat-markdown.prose h4 {
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+}
+
+.chat-markdown.prose strong {
+  font-weight: 600;
+}
+
+.chat-markdown.prose code {
+  font-size: 0.8125rem;
+  padding: 0.125em 0.25em;
+  background-color: rgba(0, 0, 0, 0.06);
+  border-radius: 0.25rem;
+}
+
+.chat-markdown.prose pre {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding: 0.5em 0.75em;
+  background-color: rgba(0, 0, 0, 0.06);
+  border-radius: 0.375rem;
+  overflow-x: auto;
+}
+
+.chat-markdown.prose pre code {
+  padding: 0;
+  background-color: transparent;
+}
+
+.chat-markdown.prose hr {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.chat-markdown.prose blockquote {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+  padding-left: 0.75em;
+  border-left: 3px solid #d1d5db;
+  color: #6b7280;
+}
