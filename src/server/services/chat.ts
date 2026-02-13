@@ -2,7 +2,6 @@ import type { Queries } from "../db/queries.js";
 import type {
   ClaudeService,
   StreamChatResult,
-  ToolCallResult,
   ToolExecutor,
 } from "./claude.js";
 import type { TodoService } from "./todo.js";
