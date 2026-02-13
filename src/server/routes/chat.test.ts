@@ -2,10 +2,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
 import express from "express";
-import type { ChatMessage, Todo, TodoSuggestion } from "../../shared/types.js";
+import type { ChatMessage, Todo } from "../../shared/types.js";
 import type { Queries } from "../db/queries.js";
-import type { ClaudeService, StreamChatResult } from "../services/claude.js";
-import { ChatService, ValidationError } from "../services/chat.js";
+import type { ClaudeService, StreamChatResult, ToolCallResult } from "../services/claude.js";
+import type { TodoService } from "../services/todo.js";
+import { ChatService, ChatStreamEvent, ValidationError } from "../services/chat.js";
 import { createChatRouter } from "./chat.js";
 
 // ---------------------------------------------------------------------------
@@ -25,15 +26,9 @@ function createMockQueries(): Queries {
       }),
     ),
     getAllTodos: vi.fn().mockReturnValue([]),
-    createTodoSuggestion: vi.fn().mockImplementation(
-      (chatMessageId: number, title: string): TodoSuggestion => ({
-        id: Math.floor(Math.random() * 1000) + 1,
-        chatMessageId,
-        title,
-        accepted: false,
-      }),
-    ),
-    // These are on Queries but not used by ChatService directly
+    createTodoSuggestion: vi.fn(),
+    clearChatHistory: vi.fn(),
+    searchTodos: vi.fn().mockReturnValue([]),
     getTodoById: vi.fn(),
     createTodo: vi.fn(),
     updateTodo: vi.fn(),
@@ -49,14 +44,27 @@ function createMockClaudeService(): ClaudeService {
   } as unknown as ClaudeService;
 }
 
+/** Create a mock TodoService. */
+function createMockTodoService(): TodoService {
+  return {
+    getAll: vi.fn().mockReturnValue([]),
+    getById: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    search: vi.fn().mockReturnValue([]),
+  } as unknown as TodoService;
+}
+
 /**
- * Create a mock async generator that yields chunks and returns a StreamChatResult.
+ * Create a mock async generator for ClaudeService.streamChat
+ * that yields strings and ToolCallResults, then returns StreamChatResult.
  */
 function createMockStreamGenerator(
-  chunks: string[],
+  chunks: Array<string | ToolCallResult>,
   result: StreamChatResult,
-): AsyncGenerator<string, StreamChatResult> {
-  async function* gen(): AsyncGenerator<string, StreamChatResult> {
+): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+  async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
     for (const chunk of chunks) {
       yield chunk;
     }
@@ -66,12 +74,12 @@ function createMockStreamGenerator(
 }
 
 /**
- * Create a mock async generator that yields some chunks then throws an error.
+ * Create a mock async generator that throws an error.
  */
 function createFailingStreamGenerator(
   error: Error,
-): AsyncGenerator<string, StreamChatResult> {
-  async function* gen(): AsyncGenerator<string, StreamChatResult> {
+): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+  async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
     throw error;
   }
   return gen();
@@ -80,20 +88,20 @@ function createFailingStreamGenerator(
 /** Consume a ChatService sendMessage generator fully. */
 async function consumeSendMessage(
   gen: AsyncGenerator<
-    string,
-    { assistantMessage: ChatMessage; suggestions: TodoSuggestion[] }
+    ChatStreamEvent,
+    { assistantMessage: ChatMessage }
   >,
 ): Promise<{
-  chunks: string[];
-  result: { assistantMessage: ChatMessage; suggestions: TodoSuggestion[] };
+  events: ChatStreamEvent[];
+  result: { assistantMessage: ChatMessage };
 }> {
-  const chunks: string[] = [];
+  const events: ChatStreamEvent[] = [];
   let iterResult = await gen.next();
   while (!iterResult.done) {
-    chunks.push(iterResult.value);
+    events.push(iterResult.value);
     iterResult = await gen.next();
   }
-  return { chunks, result: iterResult.value };
+  return { events, result: iterResult.value };
 }
 
 /** Parse SSE events from a raw response body string. */
@@ -110,6 +118,7 @@ function parseSSEEvents(
 interface MockChatService {
   getHistory: ReturnType<typeof vi.fn>;
   sendMessage: ReturnType<typeof vi.fn>;
+  clearHistory: ReturnType<typeof vi.fn>;
 }
 
 /** Create a mock ChatService for route tests. */
@@ -117,6 +126,7 @@ function createMockChatService(): MockChatService {
   return {
     getHistory: vi.fn().mockReturnValue([]),
     sendMessage: vi.fn(),
+    clearHistory: vi.fn(),
   };
 }
 
@@ -128,11 +138,13 @@ describe("ChatService", () => {
   let service: ChatService;
   let mockQueries: Queries;
   let mockClaudeService: ClaudeService;
+  let mockTodoService: TodoService;
 
   beforeEach(() => {
     mockQueries = createMockQueries();
     mockClaudeService = createMockClaudeService();
-    service = new ChatService(mockQueries, mockClaudeService);
+    mockTodoService = createMockTodoService();
+    service = new ChatService(mockQueries, mockClaudeService, mockTodoService);
   });
 
   // -------------------------------------------------------------------------
@@ -156,6 +168,17 @@ describe("ChatService", () => {
 
       expect(mockQueries.getChatHistory).toHaveBeenCalledOnce();
       expect(result).toEqual(history);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // clearHistory
+  // -------------------------------------------------------------------------
+
+  describe("clearHistory", () => {
+    it("delegates to queries.clearChatHistory", () => {
+      service.clearHistory();
+      expect(mockQueries.clearChatHistory).toHaveBeenCalledOnce();
     });
   });
 
@@ -199,7 +222,6 @@ describe("ChatService", () => {
       vi.mocked(mockClaudeService.streamChat).mockReturnValue(
         createMockStreamGenerator(["Hi!"], {
           fullText: "Hi!",
-          suggestions: [],
         }),
       );
 
@@ -212,7 +234,7 @@ describe("ChatService", () => {
       );
     });
 
-    it("yields chunks from ClaudeService", async () => {
+    it("yields chunk events from ClaudeService text", async () => {
       const userMessage: ChatMessage = {
         id: 1,
         role: "user",
@@ -223,14 +245,50 @@ describe("ChatService", () => {
       vi.mocked(mockClaudeService.streamChat).mockReturnValue(
         createMockStreamGenerator(["Hello ", "world!"], {
           fullText: "Hello world!",
-          suggestions: [],
         }),
       );
 
       const gen = service.sendMessage("Hello");
-      const { chunks } = await consumeSendMessage(gen);
+      const { events } = await consumeSendMessage(gen);
 
-      expect(chunks).toEqual(["Hello ", "world!"]);
+      expect(events).toEqual([
+        { type: "chunk", content: "Hello " },
+        { type: "chunk", content: "world!" },
+      ]);
+    });
+
+    it("yields tool_result events from ClaudeService tool calls", async () => {
+      const userMessage: ChatMessage = {
+        id: 1,
+        role: "user",
+        content: "Add a todo",
+        createdAt: "2024-01-01",
+      };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMessage);
+
+      const toolCallResult: ToolCallResult = {
+        toolName: "add_todos",
+        toolUseId: "call_1",
+        result: [{ id: 1, title: "New todo" }],
+      };
+
+      vi.mocked(mockClaudeService.streamChat).mockReturnValue(
+        createMockStreamGenerator([toolCallResult, "Done!"], {
+          fullText: "Done!",
+        }),
+      );
+
+      const gen = service.sendMessage("Add a todo");
+      const { events } = await consumeSendMessage(gen);
+
+      expect(events).toEqual([
+        {
+          type: "tool_result",
+          toolName: "add_todos",
+          result: [{ id: 1, title: "New todo" }],
+        },
+        { type: "chunk", content: "Done!" },
+      ]);
     });
 
     it("passes chat history and todos to ClaudeService", async () => {
@@ -243,7 +301,6 @@ describe("ChatService", () => {
           updatedAt: "2024-01-01",
         },
       ];
-      // After the user message is persisted, getChatHistory returns full history
       const fullHistory: ChatMessage[] = [
         { id: 1, role: "user", content: "Previous msg", createdAt: "2024-01-01" },
         { id: 2, role: "user", content: "Hello", createdAt: "2024-01-01" },
@@ -261,7 +318,6 @@ describe("ChatService", () => {
       vi.mocked(mockClaudeService.streamChat).mockReturnValue(
         createMockStreamGenerator(["Response"], {
           fullText: "Response",
-          suggestions: [],
         }),
       );
 
@@ -274,6 +330,7 @@ describe("ChatService", () => {
           { role: "user", content: "Hello" },
         ],
         todos,
+        expect.any(Function),
       );
     });
 
@@ -296,7 +353,6 @@ describe("ChatService", () => {
       vi.mocked(mockClaudeService.streamChat).mockReturnValue(
         createMockStreamGenerator(["Hi ", "there!"], {
           fullText: "Hi there!",
-          suggestions: [],
         }),
       );
 
@@ -308,59 +364,6 @@ describe("ChatService", () => {
         "Hi there!",
       );
       expect(result.assistantMessage).toEqual(assistantMessage);
-    });
-
-    it("persists suggestions with reference to assistant message", async () => {
-      const userMessage: ChatMessage = {
-        id: 1,
-        role: "user",
-        content: "Hello",
-        createdAt: "2024-01-01",
-      };
-      const assistantMessage: ChatMessage = {
-        id: 2,
-        role: "assistant",
-        content: "Here are tasks",
-        createdAt: "2024-01-01",
-      };
-      const suggestion1: TodoSuggestion = {
-        id: 10,
-        chatMessageId: 2,
-        title: "Task one",
-        accepted: false,
-      };
-      const suggestion2: TodoSuggestion = {
-        id: 11,
-        chatMessageId: 2,
-        title: "Task two",
-        accepted: false,
-      };
-
-      vi.mocked(mockQueries.createChatMessage)
-        .mockReturnValueOnce(userMessage)
-        .mockReturnValueOnce(assistantMessage);
-      vi.mocked(mockQueries.createTodoSuggestion)
-        .mockReturnValueOnce(suggestion1)
-        .mockReturnValueOnce(suggestion2);
-      vi.mocked(mockClaudeService.streamChat).mockReturnValue(
-        createMockStreamGenerator(["Here are tasks"], {
-          fullText: "Here are tasks",
-          suggestions: ["Task one", "Task two"],
-        }),
-      );
-
-      const gen = service.sendMessage("Hello");
-      const { result } = await consumeSendMessage(gen);
-
-      expect(mockQueries.createTodoSuggestion).toHaveBeenCalledWith(
-        2,
-        "Task one",
-      );
-      expect(mockQueries.createTodoSuggestion).toHaveBeenCalledWith(
-        2,
-        "Task two",
-      );
-      expect(result.suggestions).toEqual([suggestion1, suggestion2]);
     });
 
     it("handles ClaudeService errors with sanitized message", async () => {
@@ -393,7 +396,7 @@ describe("ChatService", () => {
       };
       vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMessage);
 
-      async function* failGen(): AsyncGenerator<string, StreamChatResult> {
+      async function* failGen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
         throw "string error";
       }
       vi.mocked(mockClaudeService.streamChat).mockReturnValue(failGen());
@@ -403,6 +406,264 @@ describe("ChatService", () => {
       await expect(consumeSendMessage(gen)).rejects.toThrow(
         "An unexpected error occurred",
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Tool executor
+  // -------------------------------------------------------------------------
+
+  describe("tool executor", () => {
+    it("get_todos returns all todos", async () => {
+      const todos: Todo[] = [
+        { id: 1, title: "Task 1", completed: false, createdAt: "2024-01-01", updatedAt: "2024-01-01" },
+      ];
+      vi.mocked(mockTodoService.getAll).mockReturnValue(todos);
+
+      // Access the tool executor via the streamChat call
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("get_todos", { status: "all" });
+              yield { toolName: "get_todos", toolUseId: "call_1", result: result.result } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "List", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("List");
+      const { events } = await consumeSendMessage(gen);
+
+      expect(events[0]).toEqual({
+        type: "tool_result",
+        toolName: "get_todos",
+        result: todos,
+      });
+    });
+
+    it("get_todos filters by completed status", async () => {
+      const todos: Todo[] = [
+        { id: 1, title: "Done", completed: true, createdAt: "2024-01-01", updatedAt: "2024-01-01" },
+        { id: 2, title: "Pending", completed: false, createdAt: "2024-01-01", updatedAt: "2024-01-01" },
+      ];
+      vi.mocked(mockTodoService.getAll).mockReturnValue(todos);
+
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("get_todos", { status: "completed" });
+              yield { toolName: "get_todos", toolUseId: "call_1", result: result.result } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "Done?", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("Done?");
+      const { events } = await consumeSendMessage(gen);
+
+      const toolEvent = events[0] as { type: "tool_result"; result: Todo[] };
+      expect(toolEvent.result).toHaveLength(1);
+      expect(toolEvent.result[0]!.title).toBe("Done");
+    });
+
+    it("get_todos filters by pending status", async () => {
+      const todos: Todo[] = [
+        { id: 1, title: "Done", completed: true, createdAt: "2024-01-01", updatedAt: "2024-01-01" },
+        { id: 2, title: "Pending", completed: false, createdAt: "2024-01-01", updatedAt: "2024-01-01" },
+      ];
+      vi.mocked(mockTodoService.getAll).mockReturnValue(todos);
+
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("get_todos", { status: "pending" });
+              yield { toolName: "get_todos", toolUseId: "call_1", result: result.result } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "Pending?", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("Pending?");
+      const { events } = await consumeSendMessage(gen);
+
+      const toolEvent = events[0] as { type: "tool_result"; result: Todo[] };
+      expect(toolEvent.result).toHaveLength(1);
+      expect(toolEvent.result[0]!.title).toBe("Pending");
+    });
+
+    it("add_todos creates todos via TodoService", async () => {
+      const created: Todo = { id: 5, title: "New task", completed: false, createdAt: "2024-01-01", updatedAt: "2024-01-01" };
+      vi.mocked(mockTodoService.create).mockReturnValue(created);
+
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("add_todos", { todos: [{ title: "New task" }] });
+              yield { toolName: "add_todos", toolUseId: "call_1", result: result.result } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "Add", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("Add");
+      await consumeSendMessage(gen);
+
+      expect(mockTodoService.create).toHaveBeenCalledWith("New task");
+    });
+
+    it("update_todos updates todos via TodoService", async () => {
+      const updated: Todo = { id: 1, title: "Updated", completed: true, createdAt: "2024-01-01", updatedAt: "2024-01-01" };
+      vi.mocked(mockTodoService.update).mockReturnValue(updated);
+
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("update_todos", { todos: [{ id: 1, completed: true }] });
+              yield { toolName: "update_todos", toolUseId: "call_1", result: result.result } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "Done", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("Done");
+      await consumeSendMessage(gen);
+
+      expect(mockTodoService.update).toHaveBeenCalledWith(1, { completed: true, title: undefined });
+    });
+
+    it("delete_todos deletes todos via TodoService", async () => {
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("delete_todos", { todo_ids: [1, 2] });
+              yield { toolName: "delete_todos", toolUseId: "call_1", result: result.result } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "Delete", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("Delete");
+      await consumeSendMessage(gen);
+
+      expect(mockTodoService.delete).toHaveBeenCalledWith(1);
+      expect(mockTodoService.delete).toHaveBeenCalledWith(2);
+    });
+
+    it("search_todos searches via TodoService", async () => {
+      const results: Todo[] = [
+        { id: 1, title: "Buy milk", completed: false, createdAt: "2024-01-01", updatedAt: "2024-01-01" },
+      ];
+      vi.mocked(mockTodoService.search).mockReturnValue(results);
+
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("search_todos", { query: "milk" });
+              yield { toolName: "search_todos", toolUseId: "call_1", result: result.result } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "Find milk", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("Find milk");
+      await consumeSendMessage(gen);
+
+      expect(mockTodoService.search).toHaveBeenCalledWith("milk");
+    });
+
+    it("handles unknown tool names", async () => {
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("unknown_tool", {});
+              yield { toolName: "unknown_tool", toolUseId: "call_1", result: result.result, error: result.error } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "Unknown", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("Unknown");
+      const { events } = await consumeSendMessage(gen);
+
+      const toolEvent = events[0] as { type: "tool_result"; result: unknown; toolName: string };
+      // Should have yielded a tool_result event - the error is in the ToolCallResult
+      expect(toolEvent.type).toBe("tool_result");
+    });
+
+    it("handles tool execution errors gracefully", async () => {
+      vi.mocked(mockTodoService.delete).mockImplementation(() => {
+        throw new Error("Todo with id 999 not found");
+      });
+
+      vi.mocked(mockClaudeService.streamChat).mockImplementation(
+        (_messages, _todos, toolExecutor) => {
+          async function* gen(): AsyncGenerator<string | ToolCallResult, StreamChatResult> {
+            if (toolExecutor) {
+              const result = await toolExecutor("delete_todos", { todo_ids: [999] });
+              yield { toolName: "delete_todos", toolUseId: "call_1", result: result.result, error: result.error } as ToolCallResult;
+            }
+            return { fullText: "" };
+          }
+          return gen();
+        },
+      );
+
+      const userMsg: ChatMessage = { id: 1, role: "user", content: "Delete 999", createdAt: "2024-01-01" };
+      vi.mocked(mockQueries.createChatMessage).mockReturnValueOnce(userMsg);
+
+      const gen = service.sendMessage("Delete 999");
+      const { events } = await consumeSendMessage(gen);
+
+      // Should not throw, but yield with error
+      expect(events).toHaveLength(1);
     });
   });
 });
@@ -457,6 +718,19 @@ describe("Chat Routes", () => {
   });
 
   // -------------------------------------------------------------------------
+  // DELETE /api/chat
+  // -------------------------------------------------------------------------
+
+  describe("DELETE /api/chat", () => {
+    it("returns 204 and calls clearHistory", async () => {
+      const res = await request(app).delete("/api/chat");
+
+      expect(res.status).toBe(204);
+      expect(mockService.clearHistory).toHaveBeenCalledOnce();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // POST /api/chat/message — SSE streaming
   // -------------------------------------------------------------------------
 
@@ -470,12 +744,12 @@ describe("Chat Routes", () => {
       };
 
       async function* mockGen(): AsyncGenerator<
-        string,
-        { assistantMessage: ChatMessage; suggestions: TodoSuggestion[] }
+        ChatStreamEvent,
+        { assistantMessage: ChatMessage }
       > {
-        yield "Hello ";
-        yield "world!";
-        return { assistantMessage, suggestions: [] };
+        yield { type: "chunk", content: "Hello " };
+        yield { type: "chunk", content: "world!" };
+        return { assistantMessage };
       }
       mockService.sendMessage.mockReturnValue(mockGen());
 
@@ -499,36 +773,36 @@ describe("Chat Routes", () => {
 
       const events = parseSSEEvents(res.body as string);
 
-      // Should have chunk events followed by done
       expect(events[0]).toEqual({ type: "chunk", content: "Hello " });
       expect(events[1]).toEqual({ type: "chunk", content: "world!" });
       expect(events[events.length - 1]).toEqual({ type: "done" });
     });
 
-    it("includes suggestions event when suggestions are present", async () => {
+    it("includes todo_operation event when tool_result is yielded", async () => {
       const assistantMessage: ChatMessage = {
         id: 2,
         role: "assistant",
-        content: "Here are tasks",
+        content: "Added!",
         createdAt: "2024-01-01",
       };
-      const suggestions: TodoSuggestion[] = [
-        { id: 10, chatMessageId: 2, title: "Task one", accepted: false },
-        { id: 11, chatMessageId: 2, title: "Task two", accepted: false },
-      ];
 
       async function* mockGen(): AsyncGenerator<
-        string,
-        { assistantMessage: ChatMessage; suggestions: TodoSuggestion[] }
+        ChatStreamEvent,
+        { assistantMessage: ChatMessage }
       > {
-        yield "Here are tasks";
-        return { assistantMessage, suggestions };
+        yield {
+          type: "tool_result",
+          toolName: "add_todos",
+          result: [{ id: 1, title: "New task", completed: false }],
+        };
+        yield { type: "chunk", content: "Added!" };
+        return { assistantMessage };
       }
       mockService.sendMessage.mockReturnValue(mockGen());
 
       const res = await request(app)
         .post("/api/chat/message")
-        .send({ content: "Hello" })
+        .send({ content: "Add a task" })
         .buffer(true)
         .parse((res, callback) => {
           let data = "";
@@ -542,36 +816,51 @@ describe("Chat Routes", () => {
 
       const events = parseSSEEvents(res.body as string);
 
-      // chunk, suggestions, done
+      // todo_operation, chunk, done
       expect(events).toHaveLength(3);
-      expect(events[0]).toEqual({ type: "chunk", content: "Here are tasks" });
-      expect(events[1]).toEqual({
-        type: "suggestions",
-        items: suggestions,
+      expect(events[0]).toEqual({
+        type: "todo_operation",
+        toolName: "add_todos",
+        result: [{ id: 1, title: "New task", completed: false }],
       });
+      expect(events[1]).toEqual({ type: "chunk", content: "Added!" });
       expect(events[2]).toEqual({ type: "done" });
     });
 
-    it("does not include suggestions event when suggestions array is empty", async () => {
+    it("calls broadcast for todo_operation events when broadcast is provided", async () => {
+      const broadcast = vi.fn();
+      const appWithBroadcast = express();
+      appWithBroadcast.use(express.json());
+      appWithBroadcast.use(
+        "/api/chat",
+        createChatRouter(mockService as unknown as ChatService, broadcast),
+      );
+
       const assistantMessage: ChatMessage = {
         id: 2,
         role: "assistant",
-        content: "Hello",
+        content: "Added!",
         createdAt: "2024-01-01",
       };
 
+      const createdTodo = { id: 1, title: "New task", completed: false, createdAt: "2024-01-01", updatedAt: "2024-01-01" };
+
       async function* mockGen(): AsyncGenerator<
-        string,
-        { assistantMessage: ChatMessage; suggestions: TodoSuggestion[] }
+        ChatStreamEvent,
+        { assistantMessage: ChatMessage }
       > {
-        yield "Hello";
-        return { assistantMessage, suggestions: [] };
+        yield {
+          type: "tool_result",
+          toolName: "add_todos",
+          result: [createdTodo],
+        };
+        return { assistantMessage };
       }
       mockService.sendMessage.mockReturnValue(mockGen());
 
-      const res = await request(app)
+      await request(appWithBroadcast)
         .post("/api/chat/message")
-        .send({ content: "Hello" })
+        .send({ content: "Add" })
         .buffer(true)
         .parse((res, callback) => {
           let data = "";
@@ -583,12 +872,7 @@ describe("Chat Routes", () => {
           });
         });
 
-      const events = parseSSEEvents(res.body as string);
-
-      // chunk, done — no suggestions event
-      expect(events).toHaveLength(2);
-      expect(events[0]).toEqual({ type: "chunk", content: "Hello" });
-      expect(events[1]).toEqual({ type: "done" });
+      expect(broadcast).toHaveBeenCalled();
     });
 
     it("returns SSE error event for empty content (ValidationError)", async () => {
@@ -645,10 +929,10 @@ describe("Chat Routes", () => {
 
     it("returns SSE error event when Claude fails mid-stream", async () => {
       async function* mockGen(): AsyncGenerator<
-        string,
-        { assistantMessage: ChatMessage; suggestions: TodoSuggestion[] }
+        ChatStreamEvent,
+        { assistantMessage: ChatMessage }
       > {
-        yield "partial";
+        yield { type: "chunk", content: "partial" };
         throw new Error("Claude API failure at /internal/path");
       }
       mockService.sendMessage.mockReturnValue(mockGen());
@@ -669,11 +953,9 @@ describe("Chat Routes", () => {
 
       const events = parseSSEEvents(res.body as string);
 
-      // Should have the partial chunk, then an error event
       const errorEvent = events.find((e) => e.type === "error");
       expect(errorEvent).toBeDefined();
       expect(errorEvent!.message).toBeDefined();
-      // Error message should be sanitized — no internal paths
       expect(errorEvent!.message).not.toContain("/internal/path");
     });
 

@@ -103,6 +103,35 @@ describe("initializeDatabase", () => {
     });
   });
 
+  describe("chat_sessions table", () => {
+    it("exists with correct columns", () => {
+      db = initializeDatabase(":memory:");
+      const columns = db.pragma("table_info(chat_sessions)") as {
+        cid: number;
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+        pk: number;
+      }[];
+
+      const columnNames = columns.map((c) => c.name);
+      expect(columnNames).toEqual(["id", "created_at"]);
+
+      const idCol = columns.find((c) => c.name === "id");
+      expect(idCol?.type).toBe("TEXT");
+      expect(idCol?.pk).toBe(1);
+    });
+
+    it("creates a default session on initialization", () => {
+      db = initializeDatabase(":memory:");
+      const row = db
+        .prepare("SELECT id FROM chat_sessions WHERE id = 'default'")
+        .get() as { id: string } | undefined;
+      expect(row?.id).toBe("default");
+    });
+  });
+
   describe("chat_messages table", () => {
     it("exists with correct columns", () => {
       db = initializeDatabase(":memory:");
@@ -116,7 +145,13 @@ describe("initializeDatabase", () => {
       }[];
 
       const columnNames = columns.map((c) => c.name);
-      expect(columnNames).toEqual(["id", "role", "content", "created_at"]);
+      expect(columnNames).toEqual([
+        "id",
+        "role",
+        "content",
+        "session_id",
+        "created_at",
+      ]);
 
       const idCol = columns.find((c) => c.name === "id");
       expect(idCol?.type).toBe("INTEGER");
@@ -140,8 +175,8 @@ describe("initializeDatabase", () => {
       db = initializeDatabase(":memory:");
       expect(() => {
         db.prepare(
-          "INSERT INTO chat_messages (role, content) VALUES (?, ?)"
-        ).run("user", "Hello");
+          "INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)"
+        ).run("user", "Hello", "default");
       }).not.toThrow();
     });
 
@@ -149,8 +184,8 @@ describe("initializeDatabase", () => {
       db = initializeDatabase(":memory:");
       expect(() => {
         db.prepare(
-          "INSERT INTO chat_messages (role, content) VALUES (?, ?)"
-        ).run("assistant", "Hi there!");
+          "INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)"
+        ).run("assistant", "Hi there!", "default");
       }).not.toThrow();
     });
 
@@ -158,8 +193,17 @@ describe("initializeDatabase", () => {
       db = initializeDatabase(":memory:");
       expect(() => {
         db.prepare(
-          "INSERT INTO chat_messages (role, content) VALUES (?, ?)"
-        ).run("system", "Not allowed");
+          "INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)"
+        ).run("system", "Not allowed", "default");
+      }).toThrow();
+    });
+
+    it("enforces foreign key constraint on session_id", () => {
+      db = initializeDatabase(":memory:");
+      expect(() => {
+        db.prepare(
+          "INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)"
+        ).run("user", "Hello", "nonexistent-session");
       }).toThrow();
     });
   });
@@ -213,8 +257,8 @@ describe("initializeDatabase", () => {
     it("allows inserting a suggestion linked to an existing chat message", () => {
       db = initializeDatabase(":memory:");
       db.prepare(
-        "INSERT INTO chat_messages (role, content) VALUES (?, ?)"
-      ).run("assistant", "How about this todo?");
+        "INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)"
+      ).run("assistant", "How about this todo?", "default");
       expect(() => {
         db.prepare(
           "INSERT INTO todo_suggestions (chat_message_id, title) VALUES (?, ?)"
@@ -250,10 +294,15 @@ describe("initializeDatabase", () => {
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
           );
+          CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
           CREATE TABLE IF NOT EXISTS chat_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
             content TEXT NOT NULL,
+            session_id TEXT NOT NULL REFERENCES chat_sessions(id),
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
           );
           CREATE TABLE IF NOT EXISTS todo_suggestions (
@@ -298,7 +347,7 @@ describe("initializeDatabase", () => {
   });
 
   describe("table listing", () => {
-    it("creates exactly 3 tables", () => {
+    it("creates exactly 4 tables", () => {
       db = initializeDatabase(":memory:");
       const tables = db
         .prepare(
@@ -308,6 +357,7 @@ describe("initializeDatabase", () => {
 
       expect(tables.map((t) => t.name)).toEqual([
         "chat_messages",
+        "chat_sessions",
         "todo_suggestions",
         "todos",
       ]);

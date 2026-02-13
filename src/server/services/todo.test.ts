@@ -153,6 +153,30 @@ describe("TodoService", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // search
+  // ---------------------------------------------------------------------------
+
+  describe("search", () => {
+    it("returns todos matching the query", () => {
+      service.create("Buy groceries");
+      service.create("Walk the dog");
+      service.create("Buy milk");
+
+      const results = service.search("Buy");
+      expect(results).toHaveLength(2);
+      const titles = results.map((t) => t.title);
+      expect(titles).toContain("Buy groceries");
+      expect(titles).toContain("Buy milk");
+    });
+
+    it("returns empty array when nothing matches", () => {
+      service.create("Buy groceries");
+      const results = service.search("exercise");
+      expect(results).toEqual([]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // delete
   // ---------------------------------------------------------------------------
 

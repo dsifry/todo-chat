@@ -134,6 +134,27 @@ describe("createQueries", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Chat Sessions
+  // ---------------------------------------------------------------------------
+  describe("chat sessions", () => {
+    it("getCurrentSessionId returns 'default' initially", () => {
+      const sessionId = queries.getCurrentSessionId();
+      expect(sessionId).toBe("default");
+    });
+
+    it("startNewSession returns a new session id", () => {
+      const sessionId = queries.startNewSession();
+      expect(sessionId).toBeTruthy();
+      expect(sessionId).not.toBe("default");
+    });
+
+    it("getCurrentSessionId returns the latest session", () => {
+      const newId = queries.startNewSession();
+      expect(queries.getCurrentSessionId()).toBe(newId);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Chat Messages
   // ---------------------------------------------------------------------------
   describe("chat messages", () => {
@@ -159,21 +180,97 @@ describe("createQueries", () => {
     });
 
     it("getChatHistory returns messages in created_at ASC order", () => {
-      db.prepare(
-        "INSERT INTO chat_messages (role, content, created_at) VALUES (?, ?, datetime('now', '-2 seconds'))",
-      ).run("user", "First");
-      db.prepare(
-        "INSERT INTO chat_messages (role, content, created_at) VALUES (?, ?, datetime('now', '-1 seconds'))",
-      ).run("assistant", "Second");
-      db.prepare(
-        "INSERT INTO chat_messages (role, content, created_at) VALUES (?, ?, datetime('now'))",
-      ).run("user", "Third");
+      queries.createChatMessage("user", "First");
+      queries.createChatMessage("assistant", "Second");
+      queries.createChatMessage("user", "Third");
 
       const messages = queries.getChatHistory();
       expect(messages).toHaveLength(3);
       expect(messages[0]!.content).toBe("First");
       expect(messages[1]!.content).toBe("Second");
       expect(messages[2]!.content).toBe("Third");
+    });
+
+    it("getChatHistory only returns messages from current session", () => {
+      queries.createChatMessage("user", "Old message");
+      queries.startNewSession();
+      queries.createChatMessage("user", "New message");
+
+      const messages = queries.getChatHistory();
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.content).toBe("New message");
+    });
+
+    it("createChatMessage tags message with current session", () => {
+      const newSessionId = queries.startNewSession();
+      queries.createChatMessage("user", "Session message");
+
+      const row = db
+        .prepare("SELECT session_id FROM chat_messages WHERE content = ?")
+        .get("Session message") as { session_id: string };
+      expect(row.session_id).toBe(newSessionId);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // clearChatHistory
+  // ---------------------------------------------------------------------------
+  describe("clearChatHistory", () => {
+    it("starts a new session so getChatHistory returns empty", () => {
+      queries.createChatMessage("user", "Hello");
+      queries.createChatMessage("assistant", "Hi there!");
+
+      queries.clearChatHistory();
+
+      expect(queries.getChatHistory()).toEqual([]);
+    });
+
+    it("preserves old messages in the database", () => {
+      queries.createChatMessage("user", "Hello");
+
+      queries.clearChatHistory();
+
+      const allRows = db
+        .prepare("SELECT * FROM chat_messages")
+        .all() as { content: string }[];
+      expect(allRows).toHaveLength(1);
+      expect(allRows[0]!.content).toBe("Hello");
+    });
+
+    it("succeeds when no history exists", () => {
+      expect(() => queries.clearChatHistory()).not.toThrow();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // searchTodos
+  // ---------------------------------------------------------------------------
+  describe("searchTodos", () => {
+    it("returns todos matching the query", () => {
+      queries.createTodo("Buy groceries");
+      queries.createTodo("Walk the dog");
+      queries.createTodo("Buy milk");
+
+      const results = queries.searchTodos("Buy");
+      expect(results).toHaveLength(2);
+      const titles = results.map((t) => t.title);
+      expect(titles).toContain("Buy groceries");
+      expect(titles).toContain("Buy milk");
+    });
+
+    it("returns empty array when nothing matches", () => {
+      queries.createTodo("Buy groceries");
+
+      const results = queries.searchTodos("exercise");
+      expect(results).toEqual([]);
+    });
+
+    it("performs case-insensitive search", () => {
+      queries.createTodo("Buy Groceries");
+
+      const results = queries.searchTodos("buy");
+      expect(results).toHaveLength(1);
+      expect(results[0]!.title).toBe("Buy Groceries");
     });
   });
 

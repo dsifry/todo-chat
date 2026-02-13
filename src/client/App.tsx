@@ -33,6 +33,7 @@ export function App() {
     sendMessage,
     acceptSuggestion,
     dismissSuggestions,
+    clearChat,
   } = useChat({ onSuggestionAccepted: handleSuggestionAccepted });
 
   const { toasts, addToast, dismissToast } = useToasts();
@@ -63,7 +64,7 @@ export function App() {
       <main className="flex min-h-0 flex-1 flex-col sm:flex-row">
         {/* Todo panel */}
         <section
-          className="flex flex-1 flex-col border-b border-gray-200 sm:border-b-0 sm:border-r"
+          className="flex min-h-0 flex-1 flex-col border-b border-gray-200 sm:border-b-0 sm:border-r"
           aria-label="Todo List"
         >
           <div className="border-b border-gray-200 bg-white px-4 py-2">
@@ -85,9 +86,15 @@ export function App() {
         </section>
 
         {/* Chat panel */}
-        <section className="flex flex-1 flex-col" aria-label="Chat">
-          <div className="border-b border-gray-200 bg-white px-4 py-2">
+        <section className="flex min-h-0 flex-1 flex-col" aria-label="Chat">
+          <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
             <h2 className="text-lg font-semibold text-gray-700">Chat</h2>
+            <button
+              onClick={clearChat}
+              className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+            >
+              Clear
+            </button>
           </div>
           <ChatPanel
             messages={messages}

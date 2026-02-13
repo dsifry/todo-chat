@@ -53,7 +53,7 @@ describe("WebSocket Handler", () => {
     clients = [];
 
     server = http.createServer();
-    wss = createWebSocketServer(server, service);
+    ({ wss } = createWebSocketServer(server, service));
 
     await new Promise<void>((resolve) => {
       server.listen(0, () => {
@@ -173,9 +173,9 @@ describe("WebSocket Handler", () => {
       });
 
       server = http.createServer();
-      wss = createWebSocketServer(server, service, {
+      ({ wss } = createWebSocketServer(server, service, {
         allowedOrigins: ["http://custom.example.com"],
-      });
+      }));
 
       await new Promise<void>((resolve) => {
         server.listen(0, () => {

@@ -19,7 +19,7 @@ export function TodoList({
   }
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <AddTodo onAdd={onAdd} />
       {todos.length === 0 ? (
         <div className="flex flex-1 items-center justify-center p-4">

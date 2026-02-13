@@ -12,13 +12,18 @@ import { ChatService } from "./services/chat.js";
 import { createTodoRouter } from "./routes/todos.js";
 import { createChatRouter } from "./routes/chat.js";
 import { createWebSocketServer } from "./websocket/handler.js";
+import type { BroadcastFn } from "./routes/chat.js";
+import type { ServerMessage } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const SERVER_PORT = 3001;
 
-export function createApp(db?: Database.Database): express.Express {
+export function createApp(
+  db?: Database.Database,
+  broadcastRef?: { current?: BroadcastFn },
+): express.Express {
   const app = express();
 
   // Body parsing with size limit
@@ -54,8 +59,14 @@ export function createApp(db?: Database.Database): express.Express {
     if (process.env.ANTHROPIC_API_KEY) {
       const anthropicClient = new Anthropic();
       const claudeService = new ClaudeService(anthropicClient);
-      const chatService = new ChatService(queries, claudeService);
-      app.use("/api/chat", createChatRouter(chatService));
+      const chatService = new ChatService(queries, claudeService, todoService);
+      // Deferred broadcast: chat router gets broadcast once WebSocket server starts
+      const deferredBroadcast: BroadcastFn = (msg: ServerMessage) =>
+        broadcastRef?.current?.(msg);
+      app.use(
+        "/api/chat",
+        createChatRouter(chatService, deferredBroadcast),
+      );
     }
   }
 
@@ -92,8 +103,11 @@ export function addErrorHandler(app: express.Express): void {
   );
 }
 
-export function createFullApp(db?: Database.Database): express.Express {
-  const app = createApp(db);
+export function createFullApp(
+  db?: Database.Database,
+  broadcastRef?: { current?: BroadcastFn },
+): express.Express {
+  const app = createApp(db, broadcastRef);
   addErrorHandler(app);
   return app;
 }
@@ -115,7 +129,8 @@ export function startServer(
   host: string = process.env.HOST || "127.0.0.1",
 ): void {
   const db = initializeDatabase("todo-chat.db");
-  const app = createFullApp(db);
+  const broadcastRef: { current?: BroadcastFn } = {};
+  const app = createFullApp(db, broadcastRef);
 
   const server = app.listen(port, host, () => {
     console.log(`Server running at http://${host}:${port}`);
@@ -123,7 +138,8 @@ export function startServer(
 
   const queries = createQueries(db);
   const todoService = new TodoService(queries);
-  createWebSocketServer(server, todoService);
+  const { broadcast } = createWebSocketServer(server, todoService);
+  broadcastRef.current = broadcast;
 }
 
 // Auto-start when run directly (not when imported by tests)

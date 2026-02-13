@@ -1,3 +1,4 @@
+import Markdown from "react-markdown";
 import type { ChatMessage as ChatMessageType } from "../types/index.js";
 
 interface ChatMessageProps {
@@ -16,7 +17,13 @@ export function ChatMessage({ message }: ChatMessageProps) {
             : "bg-gray-100 text-gray-900"
         }`}
       >
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        {isUser ? (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        ) : (
+          <div className="chat-markdown prose prose-sm prose-gray max-w-none break-words">
+            <Markdown>{message.content}</Markdown>
+          </div>
+        )}
       </div>
     </div>
   );

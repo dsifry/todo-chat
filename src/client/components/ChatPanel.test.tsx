@@ -363,8 +363,10 @@ describe("useChat", () => {
   // Test component that exercises the hook
   function TestHarness({
     onSuggestionAccepted,
+    onTodoChanged,
   }: {
     onSuggestionAccepted?: (title: string) => void;
+    onTodoChanged?: () => void;
   }) {
     const {
       messages,
@@ -375,7 +377,8 @@ describe("useChat", () => {
       sendMessage,
       acceptSuggestion,
       dismissSuggestions,
-    } = useChatModule.useChat({ onSuggestionAccepted });
+      clearChat,
+    } = useChatModule.useChat({ onSuggestionAccepted, onTodoChanged });
 
     return (
       <div>
@@ -410,6 +413,9 @@ describe("useChat", () => {
           onClick={() => sendMessage("Hello")}
         >
           Send
+        </button>
+        <button data-testid="clear" onClick={clearChat}>
+          Clear
         </button>
       </div>
     );
@@ -680,6 +686,90 @@ describe("useChat", () => {
     });
 
     expect(screen.queryByTestId("suggestion-10")).not.toBeInTheDocument();
+  });
+
+  it("calls onTodoChanged when todo_operation event received", async () => {
+    const onTodoChanged = vi.fn();
+    globalThis.fetch = mockFetchSSE([
+      { type: "todo_operation", toolName: "add_todos", result: [{ id: 1, title: "New" }] },
+      { type: "chunk", content: "Done!" },
+      { type: "done" },
+    ]);
+
+    await act(async () => {
+      render(<TestHarness onTodoChanged={onTodoChanged} />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("send"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("is-streaming")).toHaveTextContent("idle");
+    });
+
+    expect(onTodoChanged).toHaveBeenCalled();
+  });
+
+  it("clearChat sends DELETE and resets state", async () => {
+    // First load history with a message
+    const history = [
+      makeMessage({ id: 1, role: "user", content: "Existing msg" }),
+    ];
+
+    let deleteCallCount = 0;
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
+      if (options?.method === "DELETE") {
+        deleteCallCount++;
+        return Promise.resolve({ ok: true });
+      }
+      // GET - return history
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(history),
+      });
+    });
+
+    await act(async () => {
+      render(<TestHarness />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Existing msg")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("clear"));
+    });
+
+    expect(deleteCallCount).toBe(1);
+    await waitFor(() => {
+      expect(screen.queryByText("Existing msg")).not.toBeInTheDocument();
+    });
+  });
+
+  it("clearChat handles failure gracefully", async () => {
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
+      if (options?.method === "DELETE") {
+        return Promise.resolve({ ok: false, status: 500 });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve([]),
+      });
+    });
+
+    await act(async () => {
+      render(<TestHarness />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("clear"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("error")).toHaveTextContent("Failed to clear chat");
+    });
   });
 
   it("shows streaming content incrementally during SSE", async () => {

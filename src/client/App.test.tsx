@@ -34,6 +34,22 @@ describe("App", () => {
     expect(main).toHaveClass("sm:flex-row");
   });
 
+  it("applies min-h-0 to both panels for independent scrolling", () => {
+    render(<App />);
+    const todoPanel = screen.getByRole("region", { name: /todo list/i });
+    const chatPanel = screen.getByRole("region", { name: /chat/i });
+    expect(todoPanel).toHaveClass("min-h-0");
+    expect(chatPanel).toHaveClass("min-h-0");
+  });
+
+  it("renders Clear button in the chat section header", () => {
+    render(<App />);
+    const chatSection = screen.getByRole("region", { name: /chat/i });
+    const clearButton = chatSection.querySelector("button");
+    expect(clearButton).toBeInTheDocument();
+    expect(clearButton).toHaveTextContent("Clear");
+  });
+
   it("renders todo loading state and chat empty state", () => {
     render(<App />);
     expect(screen.getByText("Loading todos...")).toBeInTheDocument();
